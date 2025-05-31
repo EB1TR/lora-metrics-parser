@@ -3,7 +3,7 @@
 # pylint: disable=fixme, line-too-long, invalid-name
 # pylint: disable=W0703
 # pylint: disable=W0605
-
+import json
 # Libreria estándar ----------------------------------------------------------------------------------------------------
 #
 import sys
@@ -70,7 +70,7 @@ def on_message(client, userdata, msg):
                 }
 
                 if json_data['digi'] == 0 and len(json_data['call']) < 10:
-                    mqtt_client.publish(MQTT_TOPIC_OUT, str(json_data), 1)
+                    mqtt_client.publish(MQTT_TOPIC_OUT, str(json.dumps(json_data)), 1)
                 else:
                     mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
 
@@ -112,7 +112,7 @@ def on_message(client, userdata, msg):
 
 
             if json_data['digi'] == 0 and len(json_data['call']) < 10:
-                mqtt_client.publish(MQTT_TOPIC_OUT, str(json_data), 1)
+                mqtt_client.publish(MQTT_TOPIC_OUT, str(json.dumps(json_data)), 1)
             else:
                 mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
         except Exception as e:
