@@ -1,0 +1,10 @@
+services:
+  lora-metrics-parser:
+    container_name: lora-metrics-parser
+    restart: unless-stopped
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    env_file:
+      #ENV PUBLIC
+      - ./produccion.env
