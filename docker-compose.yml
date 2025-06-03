@@ -8,3 +8,6 @@ services:
     env_file:
       #ENV PUBLIC
       - ./produccion.env
+    logging:
+      options:
+        max-size: "10m"

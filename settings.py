@@ -37,3 +37,6 @@ class Config:
 
     if environ.get('MQTT_TOPIC_OUT'):
         MQTT_TOPIC_OUT = ENVIR('MQTT_TOPIC_OUT')
+
+    if environ.get('DEBUG'):
+        DEBUG = ENVIR.bool('DEBUG', default=False)
