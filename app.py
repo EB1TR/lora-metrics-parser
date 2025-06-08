@@ -82,7 +82,7 @@ def on_connect(client, userdata, flags, reasonCode, properties):
 
 def on_message(client, userdata, msg):
     lora_payload = msg.payload.decode()
-    no_parse = ["CRC", "CRC-ERROR", "TX", "OBJECT", "RADIOLIB_ERR_CRC_MISMATCH"]
+    no_parse = ["CRC", "CRC-ERROR", "TX", "OBJECT", "RADIOLIB_ERR_CRC_MISMATCH", "TELEMETRY"]
 
     # Formato de salida esperado: --------------------------------------------------------------------------------------
     #
