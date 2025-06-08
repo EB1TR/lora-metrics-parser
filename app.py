@@ -135,7 +135,7 @@ def on_message(client, userdata, msg):
         except Exception as e:
             pass
 
-    # Parser para CA2RXU
+    # Parser para DL9SAU
     #
     elif "<134>" in lora_payload:
         try:
