@@ -36,6 +36,43 @@ MQTT_TOPIC_OUT = settings.Config.MQTT_TOPIC_OUT
 mqtt_client = None
 # ----------------------------------------------------------------------------------------------------------------------
 
+def validar_json(data):
+    campos_requeridos = {
+        "ts": int,
+        "parser": str,
+        "igate": str,
+        "call": str,
+        "fw": str,
+        "rssi": int,
+        "snr": (int, float)
+    }
+
+    regex_call_igate = re.compile(r'^E[A-D][1-9][A-Z]{1,3}-[0-9]{1,2}$|^E[A-D][1-9][A-Z]{1,3}$')
+    regex_fw = re.compile(r'^AP[A-Z0-9]{4}$')
+
+    # Verifica campos presentes y tipos correctos
+    for campo, tipo in campos_requeridos.items():
+        if campo not in data:
+            return False, f"Falta el campo requerido: '{campo}'"
+        if not isinstance(data[campo], tipo):
+            return False, f"Tipo incorrecto para '{campo}': se esperaba {tipo}, se recibió {type(data[campo])}"
+
+    # Validaciones adicionales
+    if data["rssi"] > 0:
+        return False, "RSSI debe ser un valor negativo o cero"
+    if not -25 <= data["snr"] <= 40:
+        return False, "SNR fuera de rango razonable (-20 a 40)"
+
+    # Validar 'call' e 'igate' con regex
+    for campo in ["call", "igate"]:
+        if not regex_call_igate.match(data[campo]):
+            return False, f"El campo '{campo}' no coincide con el formato esperado"
+
+    # Validar 'fw' con regex
+    if not regex_fw.match(data["fw"]):
+        return False, "El campo 'fw' no coincide con el formato esperado"
+
+    return True, "JSON válido"
 
 def on_connect(client, userdata, flags, reasonCode, properties):
     global mqtt_client
@@ -45,99 +82,110 @@ def on_connect(client, userdata, flags, reasonCode, properties):
 
 def on_message(client, userdata, msg):
     lora_payload = msg.payload.decode()
+    no_parse = ["CRC", "CRC-ERROR", "TX", "OBJECT", "RADIOLIB_ERR_CRC_MISMATCH"]
 
-    # Formato de salida esperado: ----------------------------------------------------------------------------------------------------
+    # Formato de salida esperado: --------------------------------------------------------------------------------------
     #
-    # {"ts": 1748953837, "parser": "134", "igate": "EB1TK-10", "call": "EA6APL-7", "fw": "APLRT1", "digi": 0, "rssi": -124, "snr": -1}
-    # --------------------------------------------------------------------------------------------------------------------------------
+    # {"ts": 1748953837, "parser": "134", "igate": "EB1TK-10", "call": "EA6APL-7", "fw": "APLRT1", "rssi": -124, "snr": -1}
+    # ------------------------------------------------------------------------------------------------------------------
     if DEBUG:
         print(lora_payload)
+
+    patron_digi = re.compile(r'(E[A-D][1-9][A-Z]{1,3}-[0-9]{1,2}\*|E[A-D][1-9][A-Z]{1,3}\*|WIDE[1-3](?:-[1-3])?\*)')
+
     # Parser para CA2RXU
     #
-    if "<165>" in lora_payload:
-        data = lora_payload.split("/")
-        data_header = data[0].split(" ")
-        if data_header[7].upper() not in ("CRC", "CRC-ERROR", "TX", "OBJECT", "RADIOLIB_ERR_CRC_MISMATCH"):
+    if "<165>" in lora_payload and not any(term in lora_payload for term in no_parse):
+        try:
+            data = lora_payload.split("/")
+            data_header = data[0].split(" ")
 
-            data = [x.replace(" ", "") for x in data]
-            try:
-                igate = data_header[2]
+            if not re.search(patron_digi, data[3]):
+
+                data = [x.replace(" ", "") for x in data]
                 call = re.fullmatch(r'E[A-D][1-9][A-Z]{1,3}-[0-9]{1,2}', data[2].replace(" ", ""))
+                igate = data_header[2]
                 rssi = re.search(r"-?\d+", data[5].upper())
                 snr = re.search(r"-?\d+\.\d+", data[6].upper())
-                fw = data[3]
-                digi = 0
-
-                if len(fw.split(',')) > 1:
-                    digi = 1
-                    fw = fw.split(',')[0]
 
                 json_data = {
                     'ts': int(time.time()),
                     'parser': "165",
                     'igate': igate,
                     'call': call[0],
-                    'fw': fw[:6],
-                    'digi': digi,
+                    'fw': data[3][:6],
                     'rssi': int(rssi[0]),
                     'snr': float(snr[0])
                 }
 
-                if json_data['digi'] == 0 and len(json_data['call']) < 10:
+                validez = validar_json(json_data)
+
+                if validez[0]:
                     mqtt_client.publish(MQTT_TOPIC_OUT, str(json.dumps(json_data)), 1)
                     if DEBUG:
-                        print(f"📤 Publicado: {json_data}")
+                        print(f"[165] Publicado: {json_data}")
                 else:
-                    mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
+                    print(f'\n{validez[1]}')
+                    print(json_data)
+                    print(lora_payload)
+            else:
+                print(f'DIGI: {lora_payload}')
+                raise ValueError("Paquete repetido por DIGI")
 
-            except Exception as e:
-                mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
+        except Exception as e:
+            pass
 
     # Parser para CA2RXU
     #
     elif "<134>" in lora_payload:
         try:
             diva = lora_payload.split(" - ")
-            igate = diva[1].split(" ")[0]
 
-            rssi = re.search(r'RSSI:-\d*,', lora_payload)
-            rssi = rssi[0].replace(r'RSSI:', "").replace(" ", "").replace(",", "")
+            if not re.search(patron_digi, diva[3]):
+                call = re.search(r"'.*?>", diva[3])
+                call = call[0].replace("'", "").replace(">", "")
 
-            snr = re.search(r'SNR:.*', lora_payload)
-            snr = snr[0].replace("SNR:", "").replace(" ", "")
+                igate = diva[1].split(" ")[0]
 
-            call = re.search(r"'.*>", diva[3])
-            call = call[0].replace("'", "").replace(">", "")
+                rssi = re.search(r'RSSI:-\d*,', lora_payload)
+                rssi = rssi[0].replace(r'RSSI:', "").replace(" ", "").replace(",", "")
 
-            fw = re.search(r'AP[A-Z0-9]{4}', diva[3])
-            fw = fw[0]
+                snr = re.search(r'SNR:.*', lora_payload)
+                snr = snr[0].replace("SNR:", "").replace(" ", "")
 
-            json_data = {
-                'ts': int(time.time()),
-                'parser': "134",
-                'igate': igate,
-                'call': call,
-                'fw': fw[:6],
-                'digi': 0,
-                'rssi': int(rssi),
-                'snr': int(snr)
-            }
+                fw = re.search(r'AP[A-Z0-9]{4}', diva[3])
+                fw = fw[0]
 
-            if len(call.split(",")) > 1:
-                json_data['digi'] = 1
+                json_data = {
+                    'ts': int(time.time()),
+                    'parser': "134",
+                    'igate': igate,
+                    'call': call,
+                    'fw': fw[:6],
+                    'rssi': int(rssi),
+                    'snr': int(snr)
+                }
 
+                validez = validar_json(json_data)
 
-            if json_data['digi'] == 0 and len(json_data['call']) < 10:
-                mqtt_client.publish(MQTT_TOPIC_OUT, str(json.dumps(json_data)), 1)
-                if DEBUG:
-                    print(f"📤 Publicado: {json_data}")
+                if validez[0]:
+                    mqtt_client.publish(MQTT_TOPIC_OUT, str(json.dumps(json_data)), 1)
+                    if DEBUG:
+                        print(f"[134] Publicado: {json_data}")
+                else:
+                    print(f'\n{validez[1]}')
+                    print(json_data)
+                    print(lora_payload)
+
             else:
-                mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
+                print(f'DIGI: {lora_payload}')
+                raise ValueError("Paquete repetido por DIGI")
+
         except Exception as e:
-            mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
+            pass
 
     else:
-        mqtt_client.publish("lora/syslog/unparsed", str(lora_payload), 1)
+        pass
 
 # Main function --------------------------------------------------------------------------------------------------------
 #
